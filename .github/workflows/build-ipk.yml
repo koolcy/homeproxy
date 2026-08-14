@@ -1,10 +1,10 @@
-name: Build ipk for HomeProxy
+name: Build HomeProxy APK
 
 on:
   push:
     branches:
-      - 'master'
-      - 'dev'
+      - master
+      - dev
     paths:
       - 'htdocs/**'
       - 'po/**'
@@ -12,23 +12,7 @@ on:
       - 'Makefile'
       - '.github/**'
 
-  pull_request:
-    branches:
-      - 'master'
-      - 'dev'
-    types:
-      - opened
-      - synchronize
-      - reopened
-    paths:
-      - 'htdocs/**'
-      - 'root/**'
-      - 'Makefile'
-      - '.github/**'
-
-  release:
-    types:
-      - published
+  workflow_dispatch:
 
 jobs:
   build:
@@ -38,54 +22,29 @@ jobs:
       - name: Checkout source tree
         uses: actions/checkout@v5
 
-      - name: Build ipk file
+      - name: Build APK
         env:
           RELEASE_TYPE: ${{ github.event_name }}
         run: |
           set -e
 
-          pushd .github
+          chmod +x .github/build-apk.sh
 
-          echo "===== Build IPK ====="
-          fakeroot bash build-ipk.sh
+          .github/build-apk.sh
 
-          echo "===== Find generated IPK ====="
-          find . -type f -name "*.ipk" -print
+      - name: Show APK
+        run: |
+          echo "===== Generated APK ====="
+          find .github/output \
+            -type f \
+            -name "*.apk" \
+            -print
 
-          mkdir -p output
+          ls -lah .github/output/
 
-          IPK_FILE=$(find . -type f -name "*.ipk" | head -n 1)
-
-          if [ -z "$IPK_FILE" ]; then
-            echo "ERROR: No IPK file was generated!"
-            exit 1
-          fi
-
-          echo "Found IPK: $IPK_FILE"
-
-          cp "$IPK_FILE" output/
-
-          ASSET_NAME=$(basename "$IPK_FILE")
-          echo "ASSET_NAME=$ASSET_NAME" >> "$GITHUB_ENV"
-
-          echo "===== Final IPK ====="
-          ls -lah output/
-
-          popd
-
-      - name: Publishing to GitHub Artifacts
-        if: github.event_name != 'release'
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ASSET_NAME }}
-          path: .github/output/*.ipk
+          name: homeproxy-apk
+          path: .github/output/*.apk
           if-no-files-found: error
-
-      - name: Publishing to GitHub Releases
-        if: github.event_name == 'release'
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ github.token }}
-          file: .github/output/*.ipk
-          tag: ${{ github.ref }}
-          file_glob: true
