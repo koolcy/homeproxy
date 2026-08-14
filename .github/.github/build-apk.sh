@@ -1,56 +1,73 @@
 #!/bin/bash
-# SPDX-License-Identifier: GPL-2.0-only
 
 set -e
 set -o pipefail
 
-BASE_DIR="$(cd "$(dirname "$0")"; pwd)"
-PKG_DIR="$BASE_DIR/.."
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+PKG_DIR="$(cd "$BASE_DIR/.." && pwd)"
 
-export PKG_SOURCE_DATE_EPOCH="${PKG_SOURCE_DATE_EPOCH:-$(date +%s)}"
+SDK_VERSION="25.12.1"
+
+SDK_URL="https://downloads.immortalwrt.org/releases/${SDK_VERSION}/targets/x86/64/immortalwrt-sdk-${SDK_VERSION}-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
+
+SDK_DIR="$BASE_DIR/immortalwrt-sdk"
+SDK_ARCHIVE="$BASE_DIR/immortalwrt-sdk.tar.zst"
+
+OUTPUT_DIR="$BASE_DIR/output"
+
+mkdir -p "$OUTPUT_DIR"
 
 echo "========================================"
+echo " ImmortalWrt ${SDK_VERSION}"
 echo " Build HomeProxy APK"
 echo "========================================"
 
-echo "BASE_DIR: $BASE_DIR"
-echo "PKG_DIR : $PKG_DIR"
+echo "PKG_DIR    : $PKG_DIR"
+echo "SDK_DIR    : $SDK_DIR"
 
-mkdir -p "$BASE_DIR/sdk"
-mkdir -p "$BASE_DIR/output"
+# --------------------------------------------------
+# Download SDK
+# --------------------------------------------------
 
-cd "$BASE_DIR/sdk"
+if [ ! -f "$SDK_ARCHIVE" ]; then
+    echo "===== Download ImmortalWrt SDK ====="
 
-SDK_URL="https://downloads.openwrt.org/releases/25.12.0/targets/x86/64/openwrt-sdk-25.12.0-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
-
-echo "===== Download OpenWrt 25.12 SDK ====="
-
-if [ ! -f sdk.tar.zst ]; then
     curl -fL --retry 3 \
-        -o sdk.tar.zst \
+        -o "$SDK_ARCHIVE" \
         "$SDK_URL"
 fi
 
-echo "===== Extract SDK ====="
+# --------------------------------------------------
+# Extract SDK
+# --------------------------------------------------
 
-if [ ! -d sdk ]; then
-    mkdir -p sdk
-    tar --zstd -xf sdk.tar.zst --strip-components=1 -C sdk
+if [ ! -d "$SDK_DIR" ]; then
+    echo "===== Extract SDK ====="
+
+    mkdir -p "$SDK_DIR"
+
+    tar \
+        --zstd \
+        -xf "$SDK_ARCHIVE" \
+        --strip-components=1 \
+        -C "$SDK_DIR"
 fi
 
-cd sdk
+cd "$SDK_DIR"
 
-echo "===== SDK information ====="
+echo "===== SDK ready ====="
 
-./staging_dir/host/bin/apk --version || true
+# --------------------------------------------------
+# Prepare package
+# --------------------------------------------------
 
 echo "===== Prepare HomeProxy package ====="
 
+rm -rf package/luci-app-homeproxy
+
 mkdir -p package/luci-app-homeproxy
 
-rm -rf package/luci-app-homeproxy/*
-
-cp -a "$PKG_DIR/Makefile" \
+cp "$PKG_DIR/Makefile" \
     package/luci-app-homeproxy/
 
 cp -a "$PKG_DIR/htdocs" \
@@ -62,13 +79,21 @@ cp -a "$PKG_DIR/root" \
 cp -a "$PKG_DIR/po" \
     package/luci-app-homeproxy/
 
+# --------------------------------------------------
+# Feeds
+# --------------------------------------------------
+
 echo "===== Update feeds ====="
 
-./scripts/feeds update luci
+./scripts/feeds update -a
 
 ./scripts/feeds install -a
 
-echo "===== Configure APK package format ====="
+# --------------------------------------------------
+# Enable APK
+# --------------------------------------------------
+
+echo "===== Enable APK package format ====="
 
 cat > .config <<'EOF'
 CONFIG_USE_APK=y
@@ -76,26 +101,47 @@ EOF
 
 make defconfig
 
+# --------------------------------------------------
+# Build
+# --------------------------------------------------
+
 echo "===== Build HomeProxy ====="
 
 make package/luci-app-homeproxy/compile V=s
 
-echo "===== Find APK ====="
+# --------------------------------------------------
+# Find APK
+# --------------------------------------------------
 
-find bin/packages -type f -name "luci-app-homeproxy*.apk" -print
+echo "===== Find generated APK ====="
 
-APK_FILE="$(find bin/packages -type f -name "luci-app-homeproxy*.apk" | head -n 1)"
+find bin/packages \
+    -type f \
+    -name 'luci-app-homeproxy*.apk' \
+    -print
+
+APK_FILE="$(find bin/packages \
+    -type f \
+    -name 'luci-app-homeproxy*.apk' \
+    | head -n 1)"
 
 if [ -z "$APK_FILE" ]; then
-    echo "ERROR: APK was not generated!"
+    echo "ERROR: HomeProxy APK was not generated!"
     exit 1
 fi
 
-echo "Found APK:"
+echo "===== APK found ====="
+
 echo "$APK_FILE"
 
-cp "$APK_FILE" "$BASE_DIR/output/"
+# --------------------------------------------------
+# Copy output
+# --------------------------------------------------
 
-echo "===== APK output ====="
+rm -f "$OUTPUT_DIR"/*.apk
 
-ls -lah "$BASE_DIR/output/"
+cp "$APK_FILE" "$OUTPUT_DIR/"
+
+echo "===== Final APK ====="
+
+ls -lah "$OUTPUT_DIR"/*.apk
