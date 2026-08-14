@@ -1,0 +1,56 @@
+name: Build HomeProxy APK
+
+on:
+  workflow_dispatch:
+
+  release:
+    types:
+      - published
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source tree
+        uses: actions/checkout@v5
+
+      - name: Build APK
+        env:
+          RELEASE_TYPE: ${{ github.event_name }}
+        run: |
+          set -e
+
+          chmod +x .github/build-apk.sh
+
+          .github/build-apk.sh
+
+          echo "===== Generated APK ====="
+
+          find .github/output \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          ls -lah .github/output/
+
+      - name: Upload APK to GitHub Release
+        if: github.event_name == 'release'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ github.token }}
+          file: .github/output/*.apk
+          tag: ${{ github.event.release.tag_name }}
+          file_glob: true
+          overwrite: true
+
+      - name: Upload APK Artifact
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeproxy-apk
+          path: .github/output/*.apk
+          if-no-files-found: error
