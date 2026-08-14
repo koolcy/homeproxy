@@ -11,6 +11,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
@@ -22,20 +23,44 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          set -e
+
+          echo "===== Install gettext ====="
+          sudo -E apt-get update
           sudo -E apt-get -y install gettext
-          curl -LO "https://github.com/openwrt/luci/raw/master/build/i18n-scan.pl"
-          curl -LO "https://github.com/openwrt/luci/raw/master/build/i18n-update.pl"
-          perl "i18n-scan.pl" . > "po/templates/homeproxy.pot"
-          perl "i18n-update.pl" "po"
-          find po/ -name '*.po~' -exec rm -f {} \;
-          rm -f "i18n-scan.pl" "i18n-update.pl"
-          [ -z "$(git status -s)" ] || echo -e "CHANGE_STAT=1" >> "$GITHUB_ENV"
+
+          echo "===== Download LuCI translation tools ====="
+          curl -fL --retry 3 -o i18n-scan.pl \
+            "https://github.com/openwrt/luci/raw/master/build/i18n-scan.pl"
+
+          curl -fL --retry 3 -o i18n-update.pl \
+            "https://github.com/openwrt/luci/raw/master/build/i18n-update.pl"
+
+          echo "===== Scan translation ====="
+          perl i18n-scan.pl . > po/templates/homeproxy.pot
+
+          echo "===== Update translation ====="
+          perl i18n-update.pl po
+
+          echo "===== Cleanup temporary files ====="
+          find po/ -name '*.po~' -delete
+          rm -f i18n-scan.pl i18n-update.pl
+
+          echo "===== Check changes ====="
+          git status --short
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "CHANGE_STAT=1" >> "$GITHUB_ENV"
+          else
+            echo "No translation changes."
+          fi
 
       - name: Commit changes
-        if: ${{ env.CHANGE_STAT }}
+        if: env.CHANGE_STAT == '1'
         run: |
           git config --local user.name "github-actions[bot]"
-          git config --local user.email "<41898282+github-actions[bot]@users.noreply.github.com>"
-          git add .
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add po/
           git commit -m "chore(po): rescan translation"
-          git push -f origin HEAD:po
+          git push origin HEAD:master
