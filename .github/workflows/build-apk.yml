@@ -3,6 +3,17 @@ name: Build HomeProxy APK
 on:
   workflow_dispatch:
 
+  push:
+    branches:
+      - master
+      - dev
+    paths:
+      - 'htdocs/**'
+      - 'po/**'
+      - 'root/**'
+      - 'Makefile'
+      - '.github/**'
+
   release:
     types:
       - published
@@ -19,8 +30,6 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Build APK
-        env:
-          RELEASE_TYPE: ${{ github.event_name }}
         run: |
           set -e
 
@@ -28,8 +37,9 @@ jobs:
 
           .github/build-apk.sh
 
-          echo "===== Generated APK ====="
-
+      - name: Show APK
+        run: |
+          echo "===== APK ====="
           find .github/output \
             -type f \
             -name "*.apk" \
@@ -37,7 +47,15 @@ jobs:
 
           ls -lah .github/output/
 
-      - name: Upload APK to GitHub Release
+      - name: Upload Artifact
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeproxy-apk
+          path: .github/output/*.apk
+          if-no-files-found: error
+
+      - name: Upload APK to Release
         if: github.event_name == 'release'
         uses: svenstaro/upload-release-action@v2
         with:
@@ -46,11 +64,3 @@ jobs:
           tag: ${{ github.event.release.tag_name }}
           file_glob: true
           overwrite: true
-
-      - name: Upload APK Artifact
-        if: github.event_name != 'release'
-        uses: actions/upload-artifact@v4
-        with:
-          name: homeproxy-apk
-          path: .github/output/*.apk
-          if-no-files-found: error
