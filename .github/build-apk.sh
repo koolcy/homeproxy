@@ -7,8 +7,9 @@ BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_DIR="$(cd "$BASE_DIR/.." && pwd)"
 
 SDK_VERSION="25.12.1"
+TARGET="x86/64"
 
-SDK_URL="https://downloads.immortalwrt.org/releases/${SDK_VERSION}/targets/x86/64/"
+SDK_BASE_URL="https://downloads.immortalwrt.org/releases/${SDK_VERSION}/targets/${TARGET}"
 
 SDK_DIR="$BASE_DIR/immortalwrt-sdk"
 SDK_ARCHIVE="$BASE_DIR/immortalwrt-sdk.tar.zst"
@@ -18,41 +19,96 @@ mkdir -p "$OUTPUT_DIR"
 
 echo "========================================"
 echo " ImmortalWrt ${SDK_VERSION}"
+echo " Target: ${TARGET}"
 echo " Build HomeProxy APK"
 echo "========================================"
 
-# ========================================
-# Download SDK
-# ========================================
+# =========================================================
+# Find SDK
+# =========================================================
 
-if [ ! -f "$SDK_ARCHIVE" ]; then
-    echo "===== Download ImmortalWrt SDK ====="
+echo "===== Find ImmortalWrt SDK ====="
 
-    echo "SDK URL:"
-    echo "$SDK_URL"
+SDK_FILE="$(
+    curl -fsSL "$SDK_BASE_URL/" |
+    grep -oE 'href="[^"]*sdk[^"]*\.tar\.(zst|xz|gz)"' |
+    sed 's/^href="//;s/"$//' |
+    head -n 1
+)"
 
+if [ -z "$SDK_FILE" ]; then
+    echo "ERROR: Cannot find ImmortalWrt SDK!"
+    echo "URL: $SDK_BASE_URL/"
     exit 1
 fi
 
-# ========================================
+echo "SDK file: $SDK_FILE"
+
+SDK_URL="${SDK_BASE_URL}/${SDK_FILE}"
+
+echo "SDK URL:"
+echo "$SDK_URL"
+
+# =========================================================
+# Download SDK
+# =========================================================
+
+if [ ! -f "$SDK_ARCHIVE" ]; then
+    echo "===== Download SDK ====="
+
+    curl -fL --retry 5 --retry-delay 3 \
+        -o "$SDK_ARCHIVE" \
+        "$SDK_URL"
+else
+    echo "===== SDK archive already exists ====="
+fi
+
+# =========================================================
 # Extract SDK
-# ========================================
+# =========================================================
 
 if [ ! -d "$SDK_DIR" ]; then
+    echo "===== Extract SDK ====="
+
     mkdir -p "$SDK_DIR"
 
-    tar \
-        --zstd \
-        -xf "$SDK_ARCHIVE" \
-        --strip-components=1 \
-        -C "$SDK_DIR"
+    case "$SDK_ARCHIVE" in
+        *.tar.zst)
+            tar \
+                --zstd \
+                -xf "$SDK_ARCHIVE" \
+                --strip-components=1 \
+                -C "$SDK_DIR"
+            ;;
+
+        *.tar.xz)
+            tar \
+                -xJf "$SDK_ARCHIVE" \
+                --strip-components=1 \
+                -C "$SDK_DIR"
+            ;;
+
+        *.tar.gz)
+            tar \
+                -xzf "$SDK_ARCHIVE" \
+                --strip-components=1 \
+                -C "$SDK_DIR"
+            ;;
+
+        *)
+            echo "ERROR: Unknown SDK archive format!"
+            exit 1
+            ;;
+    esac
 fi
 
 cd "$SDK_DIR"
 
-# ========================================
+echo "===== SDK ready ====="
+
+# =========================================================
 # Prepare package
-# ========================================
+# =========================================================
 
 echo "===== Prepare HomeProxy package ====="
 
@@ -72,11 +128,11 @@ cp -a "$PKG_DIR/root" \
 cp -a "$PKG_DIR/po" \
     package/luci-app-homeproxy/
 
-# ========================================
-# Build po2lmo
-# ========================================
+# =========================================================
+# Build Chinese translation
+# =========================================================
 
-echo "===== Build po2lmo ====="
+echo "===== Build Chinese translation ====="
 
 rm -rf "$BASE_DIR/po2lmo"
 
@@ -110,14 +166,14 @@ popd
 
 rm -rf "$BASE_DIR/po2lmo"
 
-echo "===== Check Chinese translation ====="
+echo "===== Chinese translation ====="
 
 ls -lh \
     "$SDK_DIR/package/luci-app-homeproxy/root/usr/lib/lua/luci/i18n/homeproxy.zh-cn.lmo"
 
-# ========================================
-# Update feeds
-# ========================================
+# =========================================================
+# Feeds
+# =========================================================
 
 echo "===== Update feeds ====="
 
@@ -125,29 +181,31 @@ echo "===== Update feeds ====="
 
 ./scripts/feeds install -a
 
-# ========================================
-# Enable APK
-# ========================================
+# =========================================================
+# Configure APK
+# =========================================================
 
 echo "===== Enable APK ====="
 
-echo "CONFIG_USE_APK=y" > .config
+cat > .config <<'EOF'
+CONFIG_USE_APK=y
+EOF
 
 make defconfig
 
-# ========================================
+# =========================================================
 # Build
-# ========================================
+# =========================================================
 
 echo "===== Build HomeProxy ====="
 
 make package/luci-app-homeproxy/compile V=s
 
-# ========================================
+# =========================================================
 # Find APK
-# ========================================
+# =========================================================
 
-echo "===== Find APK ====="
+echo "===== Find generated APK ====="
 
 find bin/packages \
     -type f \
@@ -157,23 +215,36 @@ find bin/packages \
 APK_FILE="$(
     find bin/packages \
         -type f \
-        -name "luci-app-homeproxy*.apk" \
-        | head -n 1
+        -name "luci-app-homeproxy*.apk" |
+    head -n 1
 )"
 
 if [ -z "$APK_FILE" ]; then
-    echo "ERROR: APK was not generated!"
+    echo "ERROR: HomeProxy APK was not generated!"
     exit 1
 fi
 
-echo "===== APK ====="
-
+echo "Found APK:"
 echo "$APK_FILE"
+
+# =========================================================
+# Copy output
+# =========================================================
 
 rm -f "$OUTPUT_DIR"/*.apk
 
 cp "$APK_FILE" "$OUTPUT_DIR/"
 
-echo "===== Final output ====="
+echo "========================================"
+echo " Final APK"
+echo "========================================"
 
-ls -lah "$OUTPUT_DIR"
+ls -lah "$OUTPUT_DIR"/*.apk
+
+echo "========================================"
+echo " APK manifest"
+echo "========================================"
+
+if command -v apk >/dev/null 2>&1; then
+    apk manifest "$OUTPUT_DIR"/*.apk || true
+fi
